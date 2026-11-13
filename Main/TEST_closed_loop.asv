@@ -1,0 +1,294 @@
+%% TEST_closed_loop.m
+% 실제 빔 폐루프 시험: 랜덤 숨은 스텝 외란 반복, 추정기 여러 개 연속 비교
+%   KPA101 -> 추정기 -> PI(D) -> MEMS 미러 (OutputOffsets)
+%   같은 seed = 같은 외란 순서 (추정기끼리 공정 비교)
+% 전제: Kinesis 앱 꺼짐, laser_on으로 mMTIDevice 연결된 상태 (없으면 직접 연결)
+
+%% 0. 설정
+cfg.est_list = [1 2 3 4];      % 1 DoS, 2 LogRatio, 3 Hybrid 0.9, 4 Hybrid 0.8 (하나만 넣으면 그것만)
+cfg.seed     = 1;              % 외란 순서 seed
+cfg.T_total  = 20.0;           % [s] 추정기당 시간
+cfg.t_first  = 2.0;            % [s] 첫 외란 시각
+cfg.dt_ev    = [1.0 1.5];      % [s] 외란 간격 범위
+cfg.r_mm     = [0.2 1.5];      % [mm] 한 번에 미는 거리 범위
+cfg.Ki       = 20;             % [1/s] 기준 PID (루프 이득)
+cfg.Kp       = 0.5;            % 기준 PID (루프 이득)
+cfg.u_lim    = 0.1;            % [u] 명령 한계 (QPD 위 약 ±4 mm)
+cfg.abort_mm = 2.5;            % [mm] |X̂| 또는 |Ŷ|가 넘으면 그 추정기 중단
+cfg.loss_ratio = 0.95;         % 광량 손실 기준 (시작 SUM 대비)
+cfg.sat_delta  = 0.95;         % 추정 포화 기준 |δ_DoS|
+cfg.SUM_min  = 0.02;           % [V] 이 아래면 중단
+cfg.fit_half = 0.3;            % [mm] 정규화 피팅 범위 (init_pid_sim과 같음)
+cfg.J        = [40.900 -0.296; 0.567 37.800];   % [mm/u] E3
+cfg.poll_ms  = 1;              % KPA 폴링 [ms]
+cfg.band_rel = 0.02;           % 정착 밴드: 외란 대비
+cfg.band_sig = 3;              % 정착 밴드: 잡음 rms 배수 (둘 중 큰 값)
+cfg.n_out    = 3;              % 연속 몇 샘플 밖이면 '안 정착'으로 볼지 (튐 무시)
+cfg.Nmax     = 20000;
+est_names  = {'DoS', 'LogRatio', 'Hybrid a=0.9', 'Hybrid a=0.8'};
+alpha_list = [1 0 0.9 0.8];
+kin = 'C:\Program Files\Thorlabs\Kinesis';
+clear RES EVall
+
+%% 1. 경로
+here = fileparts(mfilename('fullpath'));  if isempty(here), here = pwd; end
+root = here;
+while ~isfolder(fullfile(root, 'Main'))
+    parent = fileparts(root);
+    if strcmp(parent, root), error('프로젝트 루트(Main 폴더)를 찾지 못함'); end
+    root = parent;
+end
+addpath(genpath(root));
+save_dir = fullfile(root, 'Main', 'DATA');
+
+%% 2. 랜덤 외란 일정 (추정기 공통)
+rs = RandStream('mt19937ar', 'Seed', cfg.seed);
+ev_t = [];  ev_d = zeros(2, 0);
+tt = cfg.t_first;
+while tt < cfg.T_total - 0.8
+    r  = cfg.r_mm(1) + diff(cfg.r_mm)*rand(rs);
+    th = 2*pi*rand(rs);
+    ev_t(end+1) = tt;                          %#ok<SAGROW>
+    ev_d(:, end+1) = r*[cos(th); sin(th)];     %#ok<SAGROW>
+    tt = tt + cfg.dt_ev(1) + diff(cfg.dt_ev)*rand(rs);
+end
+ev_cum_u = cfg.J \ cumsum(ev_d, 2);
+fprintf('seed %d, 외란 %d개 (%.2f~%.2f mm), Kp %.2f, Ki %.0f\n', cfg.seed, numel(ev_t), ...
+    min(vecnorm(ev_d)), max(vecnorm(ev_d)), cfg.Kp, cfg.Ki);
+
+%% 3. MZ
+if ~exist('mMTIDevice', 'var')
+    mMTIDevice = MTIDevice;
+    mMTIDevice.ConnectDevice();
+    mMTIDevice.ResetDevicePosition();
+    mMTIDevice.SetDeviceParam(MTIParam.VdifferenceMax, 173);
+    mMTIDevice.SetDeviceParam(MTIParam.HardwareFilterBw, 120);
+    mMTIDevice.SetDeviceParam(MTIParam.Vbias, 90);
+    mMTIDevice.SetDeviceParam(MTIParam.DataScale, 1.0);
+    mMTIDevice.SetDeviceParam(MTIParam.SyncMode, MTISync.Output_DOut0);
+    mMTIDevice.SetDeviceParam(MTIParam.DigitalOutputEnable, 1);
+    mMTIDevice.SetDeviceParam(MTIParam.MEMSDriverEnable, 1);
+end
+
+%% 4. KPA101 (Monitor)
+NET.addAssembly(fullfile(kin, 'Thorlabs.MotionControl.DeviceManagerCLI.dll'));
+asm = NET.addAssembly(fullfile(kin, 'Thorlabs.MotionControl.KCube.PositionAlignerCLI.dll'));
+Thorlabs.MotionControl.DeviceManagerCLI.DeviceManagerCLI.BuildDeviceList();
+lst = Thorlabs.MotionControl.DeviceManagerCLI.DeviceManagerCLI.GetDeviceList( ...
+    Thorlabs.MotionControl.KCube.PositionAlignerCLI.KCubePositionAligner.DevicePrefix);
+sn  = char(lst.Item(0));
+kpa = Thorlabs.MotionControl.KCube.PositionAlignerCLI.KCubePositionAligner.CreateKCubePositionAligner(sn);
+kpa.Connect(sn);
+
+RES = struct('est_id', {}, 'L', {}, 'status', {}, 'SUM0', {}, 'noise_um', {}, 'EV', {});
+try
+    kpa.WaitForSettingsInitialized(10000);
+    kpa.StartPolling(cfg.poll_ms); pause(0.5);
+    kpa.EnableDevice(); pause(0.5);
+    mt = asm.AssemblyHandle.GetType( ...
+        'Thorlabs.MotionControl.KCube.PositionAlignerCLI.PositionAlignerStatus+OperatingModes');
+    kpa.SetOperatingMode(System.Enum.Parse(mt, 'Monitor'), false); pause(0.5);
+
+    % dark (한 번)
+    mMTIDevice.GoToDevicePosition(0, 0, 0, 20); pause(1);
+    off = mean(read_n(kpa, 20, 5), 1);
+    fprintf('dark: XDiff %.4f, YDiff %.4f, SUM %.4f V\n', off);
+
+    % (0,0) 스트림 시작
+    mMTIDevice.SetDeviceParam(MTIParam.OutputOffsets, 0, 0);
+    mMTIDevice.SendDataStream(zeros(1,100), zeros(1,100), 255*ones(1,100), 100, 0, 0);
+    mMTIDevice.StartDataStream(-1);
+    pause(1);
+
+    %% 5. 추정기별 폐루프
+    for ie = 1:numel(cfg.est_list)
+        id = cfg.est_list(ie);
+        a  = alpha_list(id);
+        nX = est_norm(save_dir, 'X', a, cfg.fit_half);
+        nY = est_norm(save_dir, 'Y', a, cfg.fit_half);
+        mMTIDevice.SetDeviceParam(MTIParam.OutputOffsets, 0, 0);  pause(1);
+        D0 = read_n(kpa, 20, 5) - off;  SUM0 = mean(D0(:,3));
+        fprintf('\n[%d/%d] %s 시작 (시작 SUM %.3f V)\n', ie, numel(cfg.est_list), est_names{id}, SUM0);
+        [L, status] = run_loop(mMTIDevice, kpa, cfg, a, [nX; nY], off, SUM0, ev_t, ev_cum_u);
+        fprintf('    결과: %s, 루프 %.2f ms, KPA 새 값 %.2f ms\n', status, ...
+            1e3*median(diff(L.t)), 1e3*median(diff(L.t(L.new))));
+        [EV, nr] = event_metrics(L, ev_t, ev_d, cfg);
+        RES(ie) = struct('est_id', id, 'L', L, 'status', status, 'SUM0', SUM0, ...
+                         'noise_um', 1e3*nr, 'EV', EV);
+    end
+catch ME
+    fprintf('\n에러: %s\n', ME.message);
+end
+
+%% 6. 정리 (항상 실행)
+try mMTIDevice.StopDataStream(); catch, end
+try mMTIDevice.SetDeviceParam(MTIParam.OutputOffsets, 0, 0); catch, end
+try mMTIDevice.GoToDevicePosition(0, 0, 0, 20); catch, end
+try kpa.StopPolling(); kpa.Disconnect(true); catch, end
+clear kpa
+
+%% 7. 비교표
+if ~isempty(RES)
+    S = table();
+    for ie = 1:numel(RES)
+        EV = RES(ie).EV;  if isempty(EV), continue; end
+        for g = 1:2
+            if g == 1, m = EV.dist_mm < 1.0; lbl = '<1.0 mm'; else, m = EV.dist_mm >= 1.0; lbl = '>=1.0 mm'; end
+            if ~any(m), continue; end
+            S = [S; table(string(est_names{RES(ie).est_id}), string(lbl), sum(m), ...
+                mean(EV.peak_mm(m)./EV.dist_mm(m)), median(EV.settle_ms(m), 'omitnan'), ...
+                max(EV.settle_ms(m)), median(EV.os_pct(m)), mean(EV.rmse_um(m), 'omitnan'), ...
+                sum(isnan(EV.settle_ms(m))), sum(EV.loss(m)), sum(EV.sat(m)), ...
+                'VariableNames', {'estimator','dist','n','peak_ratio','settle_med_ms', ...
+                'settle_max_ms','os_med_pct','rmse_um','fail','loss','sat'})]; %#ok<AGROW>
+        end
+    end
+    fprintf('\n=== 추정기 비교 (seed %d, Kp %.2f, Ki %.0f) ===\n', cfg.seed, cfg.Kp, cfg.Ki);
+    disp(S)
+    for ie = 1:numel(RES)
+        fprintf('%-14s 상태: %s, 잡음 %.2f um rms\n', est_names{RES(ie).est_id}, RES(ie).status, RES(ie).noise_um);
+    end
+
+    out = fullfile(save_dir, sprintf('E5_CMP_seed%d_%s.mat', cfg.seed, datestr(now, 'yyyymmdd_HHMMSS')));
+    save(out, 'RES', 'S', 'cfg', 'off', 'ev_t', 'ev_d', 'est_names');
+    fprintf('저장: %s\n', out);
+
+    %% 8. 그림
+    figure('Name', sprintf('Estimator comparison (seed %d)', cfg.seed), 'Color', 'w', ...
+        'Position', [80 80 1300 420]);
+    mk = {'o', 's', '^', 'd'};
+    subplot(1,2,1); hold on; grid on;
+    for ie = 1:numel(RES)
+        EV = RES(ie).EV;  if isempty(EV), continue; end
+        scatter(EV.dist_mm, EV.settle_ms, 40, mk{RES(ie).est_id}, 'filled', ...
+            'DisplayName', est_names{RES(ie).est_id});
+    end
+    xline(1.0, 'k:', 'HandleVisibility', 'off');
+    xlabel('외란 크기 [mm]'); ylabel('정착 시간 [ms]'); legend('Location', 'best');
+    title('외란 크기별 정착 시간');
+    subplot(1,2,2); hold on; grid on;
+    for ie = 1:numel(RES)
+        EV = RES(ie).EV;  if isempty(EV), continue; end
+        scatter(EV.dist_mm, EV.os_pct, 40, mk{RES(ie).est_id}, 'filled', ...
+            'DisplayName', est_names{RES(ie).est_id});
+    end
+    xline(1.0, 'k:', 'HandleVisibility', 'off');
+    xlabel('외란 크기 [mm]'); ylabel('넘침 [%]'); legend('Location', 'best');
+    title('외란 크기별 넘침');
+end
+
+%% local functions
+function [L, status] = run_loop(dev, kpa, cfg, a, nrm, off, SUM0, ev_t, ev_cum_u)
+    N = cfg.Nmax;
+    L.t = NaN(N,1); L.raw = NaN(N,3); L.est = NaN(N,2); L.u = NaN(N,2);
+    L.dDoS = NaN(N,2); L.new = false(N,1); L.loss = false(N,1);
+    integ = [0; 0];  u_pid = [0; 0];  u_cmd = [0; 0];
+    r_prev = [NaN NaN NaN];  t_upd = NaN;  est = [0; 0];  dDoS = [0; 0];  loss = false;
+    status = '정상 종료';
+    k = 0;  t0 = tic;
+    while true
+        t = toc(t0);
+        if t >= cfg.T_total || k >= N, break; end
+        k = k + 1;
+        r_raw = read_n(kpa, 1, 0);  r = r_raw - off;
+        is_new = any(r_raw ~= r_prev);  r_prev = r_raw;
+        if is_new
+            sig.XDiff = r(1); sig.YDiff = r(2); sig.SUM = r(3);
+            [~, ~, d1x, d1y] = estimator_dos(sig, 1);
+            [~, ~, d2x, d2y] = estimator_logratio(sig, 1);
+            dX = a*d1x + (1-a)*d2x;  dY = a*d1y + (1-a)*d2y;
+            est  = [(dX - nrm(1,2))/nrm(1,1); (dY - nrm(2,2))/nrm(2,1)];
+            dDoS = [d1x; d1y];
+            if r(3) < cfg.SUM_min
+                status = sprintf('중단: SUM %.3f V', r(3));
+            elseif any(~isfinite(est))
+                status = '중단: 추정값 무효 (NaN)';
+            elseif any(abs(est) > cfg.abort_mm)
+                status = sprintf('중단: |X̂|,|Ŷ| = %.2f, %.2f mm', abs(est));
+            end
+            if ~strcmp(status, '정상 종료')
+                L.t(k) = t; L.raw(k,:) = r; L.est(k,:) = est; L.new(k) = true; break;
+            end
+            loss = r(3) < cfg.loss_ratio*SUM0;
+            if ~loss
+                dt_upd = t - t_upd;  if isnan(dt_upd), dt_upd = 0; end
+                e_u   = cfg.J \ (-est);
+                integ = integ + cfg.Ki * dt_upd * e_u;
+                u_pid = integ + cfg.Kp * e_u;
+            end
+            t_upd = t;
+        end
+        j = find(ev_t <= t, 1, 'last');
+        if isempty(j), d_now = [0; 0]; else, d_now = ev_cum_u(:, j); end
+        u_cmd = max(min(u_pid + d_now, cfg.u_lim), -cfg.u_lim);
+        dev.SetDeviceParam(MTIParam.OutputOffsets, u_cmd(1), u_cmd(2));
+        L.t(k) = t; L.raw(k,:) = r; L.est(k,:) = est; L.u(k,:) = u_cmd;
+        L.dDoS(k,:) = dDoS; L.new(k) = is_new; L.loss(k) = loss;
+    end
+    n = find(~isnan(L.t), 1, 'last');  if isempty(n), n = 0; end
+    fn = fieldnames(L);  for i = 1:numel(fn), L.(fn{i}) = L.(fn{i})(1:n, :); end
+end
+
+function [EV, nr] = event_metrics(L, ev_t, ev_d, cfg)
+    tn = L.t(L.new);  en = L.est(L.new,:);  sn = L.raw(L.new,3);
+    dn = L.dDoS(L.new,:);  ln = L.loss(L.new);
+    pre = tn < ev_t(1) - 0.1;
+    nr = sqrt(mean(sum(en(pre,:).^2, 2)));          % 반경 잡음 rms [mm]
+    if isempty(tn), EV = table(); return; end
+    nev = find(ev_t < tn(end), 1, 'last');  if isempty(nev), nev = 0; end
+    EV = table('Size', [nev 8], 'VariableTypes', ...
+        {'double','double','double','double','double','double','logical','logical'}, ...
+        'VariableNames', {'dist_mm','peak_mm','settle_ms','os_pct','rmse_um','min_SUM','loss','sat'});
+    for jj = 1:nev
+        t_end = tn(end) + 1;  if jj < numel(ev_t), t_end = ev_t(jj+1); end
+        m = tn >= ev_t(jj) & tn < t_end;
+        tj = tn(m) - ev_t(jj);  P = en(m,:);
+        d = norm(ev_d(:,jj));  dh = ev_d(:,jj)/d;
+        err = sqrt(sum(P.^2, 2));
+        band = max(cfg.band_rel*d, cfg.band_sig*nr);
+        % 연속 n_out 샘플 이상 밴드 밖인 마지막 구간의 끝 -> 정착 시각
+        out = err > band;  st = 0;  ist = 1;
+        run = 0;  last_end = 0;
+        for i = 1:numel(out)
+            if out(i), run = run + 1; else, run = 0; end
+            if run >= cfg.n_out || (out(i) && i <= cfg.n_out && all(out(1:i)))
+                last_end = i;
+            end
+        end
+        if last_end > 0
+            i2 = last_end;  while i2 < numel(out) && out(i2+1), i2 = i2 + 1; end
+            if i2 < numel(tj), st = tj(i2+1); ist = i2 + 1; else, st = NaN; ist = []; end
+        end
+        proj = P * dh;  [~, ipk] = max(proj);
+        os = max(0, -min(proj(ipk:end))) / d * 100;
+        if isempty(ist), rm = NaN; else, rm = 1e3*sqrt(mean(err(ist:end).^2)); end
+        EV(jj,:) = {d, max(err), 1e3*st, os, rm, min(sn(m))/max(sn(1),eps), ...
+                    any(ln(m)), any(any(abs(dn(m,:)) >= cfg.sat_delta))};
+    end
+end
+
+function D = read_n(kpa, N, poll_ms)
+D = NaN(N, 3);
+for i = 1:N
+    st = kpa.Status;
+    D(i,:) = [System.Convert.ToDouble(st.PositionDifference.X), ...
+              System.Convert.ToDouble(st.PositionDifference.Y), ...
+              System.Convert.ToDouble(st.Sum)];
+    if poll_ms > 0, pause(poll_ms/1000); end
+end
+end
+
+function sc = est_norm(data_dir, ax, a, fit_half)
+f = dir(fullfile(data_dir, sprintf('BEAM_SCAN_%s_*.mat', ax)));
+if isempty(f), error('빔 스캔 파일 없음 (%s축)', ax); end
+[~, i] = max([f.datenum]);
+B = load(fullfile(f(i).folder, f(i).name));
+P = B.X(:);
+sig.XDiff = B.M(:,1); sig.YDiff = B.M(:,2); sig.SUM = B.M(:,3);
+[~, ~, d1x, d1y] = estimator_dos(sig, 1);
+[~, ~, d2x, d2y] = estimator_logratio(sig, 1);
+if strcmp(ax, 'X'), d = a*d1x + (1-a)*d2x; else, d = a*d1y + (1-a)*d2y; end
+m = abs(P) <= fit_half;
+p = polyfit(P(m), d(m), 1);
+sc = [p(1) p(2)];
+end
