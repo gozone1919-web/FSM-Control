@@ -21,11 +21,12 @@ s.XDiff = Raw(:,1); s.YDiff = Raw(:,2); s.SUM = Raw(:,3);
 names = {'DoS', 'LogRatio', 'Hybrid a=0.9', 'Hybrid a=0.8'};  al = [1 0 0.9 0.8];
 for ax = 'XY'
     g = dir(fullfile(data_dir, ['BEAM_SCAN_' ax '_*.mat']));  [~, i] = max([g.datenum]);
-    B = load(fullfile(g(i).folder, g(i).name));  m = abs(B.X(:)) <= 0.3;
-    b.XDiff = B.M(m,1); b.YDiff = B.M(m,2); b.SUM = B.M(m,3);
+    B = load(fullfile(g(i).folder, g(i).name));
+    Xs = B.X(:);  m = abs(Xs) <= 0.1;  Xs = Xs(m);  M = B.M(m, :);          % [수정] 작은 빔: 중심 ±0.1 mm, 길이 맞춤
+    b.XDiff = M(:,1); b.YDiff = M(:,2); b.SUM = M(:,3);                     % [수정]
     [~, ~, e1x, e1y] = estimator_dos(b, 1);  [~, ~, e2x, e2y] = estimator_logratio(b, 1);
     if ax == 'X', e1 = e1x; e2 = e2x; else, e1 = e1y; e2 = e2y; end
-    p1 = polyfit(B.X(m), e1, 1);  p2 = polyfit(B.X(m), e2, 1);
+    p1 = polyfit(Xs, e1(:), 1);  p2 = polyfit(Xs, e2(:), 1);                % [수정]
     slope.(ax) = [p1(1) p2(1)];                       % [DoS LogRatio] 중심 기울기 [1/mm]
 end
 fprintf('\n위치 잡음 [um]      X 1σ    Y 1σ   반경 rms\n');
