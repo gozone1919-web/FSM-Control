@@ -1,5 +1,5 @@
 %% NEW_TEST_closed_loop.m
-% 실제 빔 폐루프 시험: 랜덤 숨은 스텝 외란 + SILEX 진동, 추정기 여러 개 연속 비교             % [수정]
+% 실제 빔 폐루프 시험: 랜덤 숨은 스텝 외란 + SILEX 진동, 추정기 여러 개 연속 비교
 %   제어: 각 추정기의 X̂ / 평가: 실제 위치(LogRatio δ -> 빔 스캔 표 역변환)와 정규화 X̂ 두 기준
 %   추적 구간: 반대쪽 반 신호가 바닥값의 2배 이상인 범위 (실제 위치 측정 가능)
 %   탐색 구간: 그 밖 (방향만 앎, 실제 위치 NaN)
@@ -7,40 +7,41 @@
 %   coarse(재포착): 광량 손실(SUM < 93%) 0.2 s 이상, 또는 추정값 NaN 0.5 s 이상
 %     원인: 전환 순간 SUM < 93%면 광량 손실, 아니면 NaN. coarse 이벤트는 평균에서 제외
 %   결과표: 이벤트를 NaN 없음 / NaN 있음 / 전체로 나눠 평균
-%   같은 seed = 같은 외란 순서, 같은 진동                                                     % [수정]
+%   같은 seed = 같은 외란 순서, 같은 진동
 % 전제: Kinesis 앱 꺼짐, laser_on으로 mMTIDevice 연결된 상태 (없으면 직접 연결)
 
 %% 0. 설정
-cfg.version  = 3;              % 3 = 기준 PID 0.4/20 + SILEX 진동 + 외란 간격 3~4 s           % [수정]
-cfg.est_list = [1 2 3 4];
-cfg.seed     = 10;              % 외란 순서 seed
-cfg.T_total  = 80.0;           % [s] 추정기당 시간                                           % [수정]
-cfg.t_first  = 4.0;            % [s] 첫 외란 시각 (앞 2 s 정착, 뒤 2 s 정상 상태 흔들림)      % [수정]
-cfg.pre_win  = 2.0;            % [s] 정상 상태 흔들림 구간: 첫 외란 전 이만큼               % [수정]
-cfg.dt_ev    = [3.0 4.0];      % [s] 외란 간격 범위 (정착 후 진동만 잡는 구간 확보)          % [수정]
+cfg.version  = 5;              % 4 = 작은 빔(렌즈 없음), 11/20 J
+cfg.est_list = [1 2 5 6 7];
+cfg.seed     = 6;              % 외란 순서 seed
+cfg.T_total  = 80.0;           % [s] 추정기당 시간
+cfg.t_first  = 4.0;            % [s] 첫 외란 시각 (앞 2 s 정착, 뒤 2 s 정상 상태 흔들림)
+cfg.pre_win  = 2.0;            % [s] 정상 상태 흔들림 구간: 첫 외란 전 이만큼
+cfg.dt_ev    = [3.0 4.0];      % [s] 외란 간격 범위 (정착 후 진동만 잡는 구간 확보)
 cfg.r_mm     = [0.2 3.7];      % [mm] 한 번에 미는 거리 범위 (u_lim 0.1에서 Y 최대 3.78)
-cfg.Kp       = 0.4;            % 기준 PID (루프 이득, tune_fine + TEST_fine으로 선정)        % [수정]
+cfg.Kp       = 0.4;            % 기준 PID (루프 이득, tune_fine + TEST_fine으로 선정)
 cfg.Ki       = 20;             % [1/s] 기준 PID (루프 이득)
-cfg.vib_um   = 15;             % [µm] SILEX 진동 RMS (QPD 위, 축당)                          % [수정]
-cfg.vib_fc   = 1;              % [Hz] SILEX 꺾임 주파수                                       % [수정]
-cfg.Ts_vib   = 0.0158;         % [s] 진동 신호 갱신 간격 (KPA 주기)                           % [수정]
+cfg.vib_um   = 15;             % [µm] SILEX 진동 RMS (QPD 위, 축당)
+cfg.vib_fc   = 1;              % [Hz] SILEX 꺾임 주파수
+cfg.Ts_vib   = 0.0158;         % [s] 진동 신호 갱신 간격 (KPA 주기)
 cfg.u_lim    = 0.1;            % [u] 명령 한계 (QPD 위 X ±4.09, Y ±3.78 mm)
 cfg.loss_ratio = 0.93;         % 광량 손실 기준 (시작 SUM 대비)
 cfg.loss_hold  = 0.2;          % [s] 광량 손실이 이만큼 이어지면 coarse
 cfg.nan_hold   = 0.5;          % [s] 추정값 NaN이 이만큼 이어지면 coarse
 cfg.sat_delta  = 0.95;         % 추정 포화 기준 |δ_DoS|
 cfg.SUM_min  = 0.02;           % [V] 이 아래면 그 추정기 중단
-cfg.fit_half = 0.3;            % [mm] 정규화 피팅 범위 (init_pid_sim과 같음)
-cfg.J        = [40.900 -0.296; 0.567 37.800];   % [mm/u] E3
+cfg.fit_half = 0.1;            % [mm] 정규화 피팅 범위 (작은 빔: 직선 구간만)
+cfg.J        = [40.900 -4.130; -1.680 37.800];   % [mm/u] 11/20 미러 재정렬 후 E3
 cfg.poll_ms  = 1;              % KPA 폴링 [ms]
 cfg.band_rel = 0.02;           % 정착 밴드: 외란 대비
 cfg.band_sig = 3;              % 정착 밴드: 정상 상태 흔들림 rms 배수 (둘 중 큰 값)
 cfg.n_out    = 3;              % 연속 몇 샘플 밖이면 '안 정착'으로 볼지 (튐 무시)
-cfg.Nmax     = 40000;
+cfg.Nmax     = 300000;
 cfg.floor_k  = 2;              % 추적 구간: 반대쪽 반 신호 >= floor_k × 바닥값
-L_mm = 202.5;                  % [mm] 미러-QPD 거리 (µrad 환산)                              % [수정]
-est_names  = {'DoS', 'LogRatio', 'Hybrid a=0.9', 'Hybrid a=0.8'};
-alpha_list = [1 0 0.9 0.8];
+
+L_mm = 202.5;                  % [mm] 미러-QPD 거리 (µrad 환산)
+est_names  = {'DoS', 'LogRatio', 'Hybrid a=0.9', 'Hybrid a=0.8', 'Hybrid a=0.5', 'Hybrid a=0.3', 'Hybrid a=0.1'};   % [수정] 5~7 추가
+alpha_list = [1 0 0.9 0.8 0.5 0.3 0.1];                                                                          % [수정]
 kin = 'C:\Program Files\Thorlabs\Kinesis';
 clear RES
 
@@ -65,7 +66,7 @@ track_mm = min(abs([TX.P(1) TX.P(end) TY.P(1) TY.P(end)]));
 fprintf('광량 손실(중심 SUM의 %.0f %%) 위치: X %.2f / %+.2f mm, Y %.2f / %+.2f mm\n', ...
     100*cfg.loss_ratio, lossX, lossY);
 
-%% 3. 랜덤 외란 일정 + SILEX 진동 (추정기 공통)                                              % [수정]
+%% 3. 랜덤 외란 일정 + SILEX 진동 (추정기 공통)
 rs = RandStream('mt19937ar', 'Seed', cfg.seed);
 ev_t = [];  ev_d = zeros(2, 0);
 tt = cfg.t_first;
@@ -77,17 +78,17 @@ while tt < cfg.T_total - 0.8
     tt = tt + cfg.dt_ev(1) + diff(cfg.dt_ev)*rand(rs);
 end
 ev_cum_u = cfg.J \ cumsum(ev_d, 2);
-rv = RandStream('mt19937ar', 'Seed', 1000 + cfg.seed);                                      % [수정]
-av = exp(-2*pi*cfg.vib_fc*cfg.Ts_vib);  Nv = ceil(cfg.T_total/cfg.Ts_vib) + 1;  Nb = round(10/cfg.Ts_vib);  % [수정]
-vib_mm = zeros(Nv, 2);                                                                      % [수정]
-for k = 1:2                                                                                 % [수정]
-    v = filter(sqrt(1 - av^2), [1 -av], randn(rv, Nv + Nb, 1));                             % [수정]
-    vib_mm(:,k) = 1e-3*cfg.vib_um * v(Nb+1:end);                                            % [수정]
-end                                                                                         % [수정]
-vib_u = (cfg.J \ vib_mm.').';                                                               % [수정]
+rv = RandStream('mt19937ar', 'Seed', 1000 + cfg.seed);
+av = exp(-2*pi*cfg.vib_fc*cfg.Ts_vib);  Nv = ceil(cfg.T_total/cfg.Ts_vib) + 1;  Nb = round(10/cfg.Ts_vib);
+vib_mm = zeros(Nv, 2);
+for k = 1:2
+    v = filter(sqrt(1 - av^2), [1 -av], randn(rv, Nv + Nb, 1));
+    vib_mm(:,k) = 1e-3*cfg.vib_um * v(Nb+1:end);
+end
+vib_u = (cfg.J \ vib_mm.').';
 fprintf('seed %d, 외란 %d개 (%.2f~%.2f mm), Kp %.2f, Ki %.0f\n', cfg.seed, numel(ev_t), ...
     min(vecnorm(ev_d)), max(vecnorm(ev_d)), cfg.Kp, cfg.Ki);
-fprintf('SILEX 진동: 목표 %.1f µm, 실제 RMS X %.1f / Y %.1f µm\n', cfg.vib_um, 1e3*rms(vib_mm));  % [수정]
+fprintf('SILEX 진동: 목표 %.1f µm, 실제 RMS X %.1f / Y %.1f µm\n', cfg.vib_um, 1e3*rms(vib_mm));
 
 %% 4. MZ
 if ~exist('mMTIDevice', 'var')
@@ -104,24 +105,10 @@ if ~exist('mMTIDevice', 'var')
 end
 
 %% 5. KPA101 (Monitor)
-NET.addAssembly(fullfile(kin, 'Thorlabs.MotionControl.DeviceManagerCLI.dll'));
-asm = NET.addAssembly(fullfile(kin, 'Thorlabs.MotionControl.KCube.PositionAlignerCLI.dll'));
-Thorlabs.MotionControl.DeviceManagerCLI.DeviceManagerCLI.BuildDeviceList();
-lst = Thorlabs.MotionControl.DeviceManagerCLI.DeviceManagerCLI.GetDeviceList( ...
-    Thorlabs.MotionControl.KCube.PositionAlignerCLI.KCubePositionAligner.DevicePrefix);
-sn  = char(lst.Item(0));
-kpa = Thorlabs.MotionControl.KCube.PositionAlignerCLI.KCubePositionAligner.CreateKCubePositionAligner(sn);
-kpa.Connect(sn);
-
-RES = struct('est_id', {}, 'L', {}, 'status', {}, 'SUM0', {}, 'noise_um', {}, 'EV', {}, 'EVe', {}, 'NV', {}, 'tot', {});  % [수정]
+RES = struct('est_id', {}, 'L', {}, 'status', {}, 'SUM0', {}, 'noise_um', {}, 'EV', {}, 'EVe', {}, 'NV', {}, 'tot', {});
+stamp = datestr(now, 'yyyymmdd_HHMMSS');   % [수정] 임시 파일 이름용 (이 실행 공통)
 try
-    kpa.WaitForSettingsInitialized(10000);
-    kpa.StartPolling(cfg.poll_ms); pause(0.5);
-    kpa.EnableDevice(); pause(0.5);
-    mt = asm.AssemblyHandle.GetType( ...
-        'Thorlabs.MotionControl.KCube.PositionAlignerCLI.PositionAlignerStatus+OperatingModes');
-    kpa.SetOperatingMode(System.Enum.Parse(mt, 'Monitor'), false); pause(0.5);
-
+    kpa = kpa_open(kin, cfg.poll_ms);   % [수정] 연결·초기화를 함수로 묶음 (추정기마다 다시 연결)
     mMTIDevice.GoToDevicePosition(0, 0, 0, 20); pause(1);
     off = mean(read_n(kpa, 20, 5), 1);
     fprintf('dark: XDiff %.4f, YDiff %.4f, SUM %.4f V\n', off);
@@ -134,23 +121,29 @@ try
     %% 6. 추정기별 폐루프
     for ie = 1:numel(cfg.est_list)
         id = cfg.est_list(ie);
+        
         a  = alpha_list(id);
         nX = est_norm(save_dir, 'X', a, cfg.fit_half);
         nY = est_norm(save_dir, 'Y', a, cfg.fit_half);
         mMTIDevice.SetDeviceParam(MTIParam.OutputOffsets, 0, 0);  pause(1);
         D0 = read_n(kpa, 20, 5) - off;  SUM0 = mean(D0(:,3));
         fprintf('\n[%d/%d] %s 시작 (시작 SUM %.3f V)\n', ie, numel(cfg.est_list), est_names{id}, SUM0);
-        [L, status] = run_loop(mMTIDevice, kpa, cfg, a, [nX; nY], off, SUM0, ev_t, ev_cum_u, vib_u, TX, TY);  % [수정]
+        [L, status] = run_loop(mMTIDevice, kpa, cfg, a, [nX; nY], off, SUM0, ev_t, ev_cum_u, vib_u, TX, TY);
         fprintf('    결과: %s, 루프 %.2f ms, KPA 새 값 %.2f ms, coarse %d회 (광량 손실 %d, NaN %d), NaN 샘플 %d개\n', ...
             status, 1e3*median(diff(L.t)), 1e3*median(diff(L.t(L.new))), ...
             sum(L.coarse > 0), sum(L.coarse == 1), sum(L.coarse == 2), sum(L.nan & L.new));
-        tot = total_metric(L, ev_t);                                                                         % [수정]
-        fprintf('    전체 오차: RMS %.1f µm (%.0f µrad), 탐색 구간 %.1f %% 시간, 최대 %.2f mm\n', ...            % [수정]
-            tot.rms_um, tot.rms_um/L_mm*1e3, tot.search_pct, tot.max_mm);                                    % [수정]
+        tot = total_metric(L, ev_t);
+        fprintf('    전체 오차: RMS %.1f µm (%.0f µrad), 탐색 구간 %.1f %% 시간, 최대 %.2f mm\n', ...
+            tot.rms_um, tot.rms_um/L_mm*1e3, tot.search_pct, tot.max_mm);
         [EV,  nr, NV] = event_metrics(L, ev_t, ev_d, cfg, 'true');
         [EVe, ~,  ~ ] = event_metrics(L, ev_t, ev_d, cfg, 'est');
         RES(ie) = struct('est_id', id, 'L', L, 'status', status, 'SUM0', SUM0, ...
-                         'noise_um', 1e3*nr, 'EV', EV, 'EVe', EVe, 'NV', NV, 'tot', tot);                    % [수정]
+                         'noise_um', 1e3*nr, 'EV', EV, 'EVe', EVe, 'NV', NV, 'tot', tot);
+        R = RES(ie);   % [수정] 추정기 하나 끝날 때마다 바로 저장 (꺼져도 끝난 것은 남음)
+        part = fullfile(save_dir, sprintf('E5_PART_seed%d_est%d_%s.mat', cfg.seed, id, stamp));   % [수정]
+        save(part, 'R', 'cfg', 'alpha_list', 'off', 'ev_t', 'ev_d', 'est_names', ...   % [수정]
+            'TX', 'TY', 'lossX', 'lossY', 'track_mm', 'vib_mm');   % [수정]
+        fprintf('    임시 저장: %s\n', part);   % [수정]
     end
 catch ME
     fprintf('\n에러: %s\n', ME.message);
@@ -160,7 +153,7 @@ end
 try mMTIDevice.StopDataStream(); catch, end
 try mMTIDevice.SetDeviceParam(MTIParam.OutputOffsets, 0, 0); catch, end
 try mMTIDevice.GoToDevicePosition(0, 0, 0, 20); catch, end
-try kpa.StopPolling(); kpa.Disconnect(true); catch, end
+if exist('kpa', 'var'), kpa_close(kpa); end   % [수정]
 clear kpa
 
 %% 8. 비교표, NaN 상황표, 그림 (표와 그림은 e5_table, e5_plot: E5_summary와 공용)
@@ -173,10 +166,10 @@ if ~isempty(RES)
     fprintf('coarse_loss: 광량 손실로 coarse, coarse_nan: NaN으로 coarse, loss: 광량 손실 발생(회복 포함)\n');
     fprintf('search: 탐색 구간 진입, ret_med_ms: 추적 구간 복귀 시간, nan_n: NaN 샘플 수 합\n');
     fprintf('peak_ratio: 탐색 구간에 안 들어간 이벤트만 (들어가면 최대 오차 측정 불가)\n');
-    fprintf('rmse: 정착 후 다음 외란까지 (진동 포함)\n');                                           % [수정]
-    fprintf('\n=== [실제 위치 기준] seed %d, Kp %.2f, Ki %.0f, 진동 %.0f µm ===\n', cfg.seed, cfg.Kp, cfg.Ki, cfg.vib_um);  % [수정]
+    fprintf('rmse: 정착 후 다음 외란까지 (진동 포함)\n');
+    fprintf('\n=== [실제 위치 기준] seed %d, Kp %.2f, Ki %.0f, 진동 %.0f µm ===\n', cfg.seed, cfg.Kp, cfg.Ki, cfg.vib_um);
     disp(S)
-    fprintf('\n=== [정규화 X̂ 기준] seed %d, Kp %.2f, Ki %.0f, 진동 %.0f µm ===\n', cfg.seed, cfg.Kp, cfg.Ki, cfg.vib_um);  % [수정]
+    fprintf('\n=== [정규화 X̂ 기준] seed %d, Kp %.2f, Ki %.0f, 진동 %.0f µm ===\n', cfg.seed, cfg.Kp, cfg.Ki, cfg.vib_um);
     disp(Se)
     NVall = table();
     for ie = 1:numel(RES)
@@ -187,28 +180,28 @@ if ~isempty(RES)
     fprintf('\n=== NaN 상황 (NaN이 난 이벤트마다 한 줄) ===\n');
     if height(NVall) > 0, disp(NVall), else, disp('NaN 없음'); end
     for ie = 1:numel(RES)
-        fprintf('%-14s 상태: %s, 정상 상태 흔들림(진동 포함) %.2f um, 전체 RMS %.1f um, 탐색 구간 %.1f %%\n', ...  % [수정]
-            est_names{RES(ie).est_id}, RES(ie).status, RES(ie).noise_um, RES(ie).tot.rms_um, RES(ie).tot.search_pct);  % [수정]
+        fprintf('%-14s 상태: %s, 정상 상태 흔들림(진동 포함) %.2f um, 전체 RMS %.1f um, 탐색 구간 %.1f %%\n', ...
+            est_names{RES(ie).est_id}, RES(ie).status, RES(ie).noise_um, RES(ie).tot.rms_um, RES(ie).tot.search_pct);
     end
 
     out = fullfile(save_dir, sprintf('E5_CMP_seed%d_%s.mat', cfg.seed, datestr(now, 'yyyymmdd_HHMMSS')));
     save(out, 'RES', 'S', 'Se', 'NVall', 'cfg', 'off', 'ev_t', 'ev_d', 'est_names', ...
-        'TX', 'TY', 'lossX', 'lossY', 'track_mm', 'vib_mm');                                        % [수정]
+        'TX', 'TY', 'lossX', 'lossY', 'track_mm', 'vib_mm');
     fprintf('저장: %s\n', out);
 
     loss_mm = min(abs([lossX lossY]));
     e5_plot(RES, est_names, track_mm, loss_mm, sprintf('seed %d', cfg.seed));
-    e5_rms_plot(RES, est_names, ev_t, ev_d, sprintf('seed %d', cfg.seed));                         % [수정]
+    e5_rms_plot(RES, est_names, ev_t, ev_d, sprintf('seed %d', cfg.seed));
 end
 
 %% local functions
-function [L, status] = run_loop(dev, kpa, cfg, a, nrm, off, SUM0, ev_t, ev_cum_u, vib_u, TX, TY)  % [수정]
+function [L, status] = run_loop(dev, kpa, cfg, a, nrm, off, SUM0, ev_t, ev_cum_u, vib_u, TX, TY)
     N = cfg.Nmax;
     L.t = NaN(N,1); L.raw = NaN(N,3); L.est = NaN(N,2); L.estc = NaN(N,2); L.true = NaN(N,2);
     L.u = NaN(N,2); L.dDoS = NaN(N,2); L.new = false(N,1); L.nan = false(N,1);
     L.loss = false(N,1); L.coarse = zeros(N,1); L.reacq = false(N,1);
     integ = [0; 0];  u_pid = [0; 0];  u_cmd = [0; 0];
-    u_sent = [NaN; NaN];   % [수정] u_sent 초기화
+    u_sent = [NaN; NaN];
     r_prev = [NaN NaN NaN];  t_upd = NaN;  est = [0; 0];  est_c = [0; 0];  tru = [0; 0];  dDoS = [0; 0];
     isn = false;  lossS = false;  t_loss0 = NaN;  t_nan0 = NaN;  reacq = false;
     status = '정상 종료';
@@ -217,12 +210,13 @@ while true
         t = toc(t0);
 if t >= cfg.T_total || k >= N, break; end
         k = k + 1;
+        pause(0.001);   % [수정] KPA 과다 읽기 방지
         r_raw = read_n(kpa, 1, 0);  r = r_raw - off;
         is_new = any(r_raw ~= r_prev);  r_prev = r_raw;
         j = find(ev_t <= t, 1, 'last');
-if isempty(j), d_step = [0; 0]; else, d_step = ev_cum_u(:, j); end                    % [수정]
-        iv = min(floor(t/cfg.Ts_vib) + 1, size(vib_u, 1));                                    % [수정]
-        d_now = d_step + vib_u(iv, :).';                                                      % [수정]
+if isempty(j), d_step = [0; 0]; else, d_step = ev_cum_u(:, j); end
+        iv = min(floor(t/cfg.Ts_vib) + 1, size(vib_u, 1));
+        d_now = d_step + vib_u(iv, :).';
         cz = 0;
 if is_new
             sig.XDiff = r(1); sig.YDiff = r(2); sig.SUM = r(3);
@@ -251,7 +245,7 @@ if reacq && ~isn && ~lossS, reacq = false; end
 if ~reacq && ((~isnan(t_loss0) && t - t_loss0 >= cfg.loss_hold) || ...
                           (~isnan(t_nan0)  && t - t_nan0  >= cfg.nan_hold))
 if lossS, cz = 1; else, cz = 2; end
-                integ = -d_step;  u_pid = integ;  % coarse 대신: 계단 외란만 되돌려 미러 중심으로  % [수정]
+                integ = -d_step;  u_pid = integ;  % coarse 대신: 계단 외란만 되돌려 미러 중심으로
                 est_c = [0; 0];  reacq = true;  t_loss0 = NaN;  t_nan0 = NaN;
 else
                 dt_upd = t - t_upd;  if isnan(dt_upd), dt_upd = 0; end
@@ -262,7 +256,7 @@ end
             t_upd = t;
 end
                 u_cmd = max(min(u_pid + d_now, cfg.u_lim), -cfg.u_lim);
-if any(u_cmd ~= u_sent), dev.SetDeviceParam(MTIParam.OutputOffsets, u_cmd(1), u_cmd(2)); u_sent = u_cmd; end   % [수정]
+if any(u_cmd ~= u_sent), dev.SetDeviceParam(MTIParam.OutputOffsets, u_cmd(1), u_cmd(2)); u_sent = u_cmd; end
         L.t(k) = t; L.raw(k,:) = r; L.est(k,:) = est; L.estc(k,:) = est_c; L.true(k,:) = tru;
         L.u(k,:) = u_cmd; L.dDoS(k,:) = dDoS; L.new(k) = is_new; L.nan(k) = isn;
         L.loss(k) = lossS; L.coarse(k) = cz; L.reacq(k) = reacq;
@@ -278,8 +272,8 @@ function [EV, nr, NV] = event_metrics(L, ev_t, ev_d, cfg, which)
     if strcmp(which, 'true'), Pt = L.true(L.new,:); else, Pt = L.est(L.new,:); end
     Pe = L.est(L.new,:);  Ptr = L.true(L.new,:);
     dn = L.dDoS(L.new,:);  ln = L.loss(L.new);  nn = L.nan(L.new);  cz = L.coarse(L.new);
-    pre = tn >= ev_t(1) - cfg.pre_win & tn < ev_t(1) - 0.1;   % 시작 직후 정착 구간 제외      % [수정]
-    nr = sqrt(mean(sum(Pt(pre,:).^2, 2), 'omitnan'));     % 정상 상태 반경 흔들림 rms [mm]   % [수정]
+    pre = tn >= ev_t(1) - cfg.pre_win & tn < ev_t(1) - 0.1;   % 시작 직후 정착 구간 제외
+    nr = sqrt(mean(sum(Pt(pre,:).^2, 2), 'omitnan'));     % 정상 상태 반경 흔들림 rms [mm]
     EV = table();  NV = table();
     if isempty(tn), return; end
     nev = find(ev_t < tn(end), 1, 'last');  if isempty(nev), return; end
@@ -337,14 +331,14 @@ function [EV, nr, NV] = event_metrics(L, ev_t, ev_d, cfg, which)
     end
 end
 
-function tot = total_metric(L, ev_t)                                                          % [수정]
-% 첫 외란부터 끝까지 전체 오차 (실제 위치). 탐색 구간(NaN)은 RMS에서 빼고 시간 비율로 기록     % [수정]
-    w = L.new & L.t >= ev_t(1);                                                               % [수정]
-    e = sqrt(sum(L.true(w,:).^2, 2));                                                         % [수정]
-    tot.rms_um     = 1e3*sqrt(mean(e.^2, 'omitnan'));                                         % [수정]
-    tot.search_pct = 100*mean(isnan(e));                                                      % [수정]
-    tot.max_mm     = max(e);                                                                  % [수정]
-end                                                                                           % [수정]
+function tot = total_metric(L, ev_t)
+% 첫 외란부터 끝까지 전체 오차 (실제 위치). 탐색 구간(NaN)은 RMS에서 빼고 시간 비율로 기록
+    w = L.new & L.t >= ev_t(1);
+    e = sqrt(sum(L.true(w,:).^2, 2));
+    tot.rms_um     = 1e3*sqrt(mean(e.^2, 'omitnan'));
+    tot.search_pct = 100*mean(isnan(e));
+    tot.max_mm     = max(e);
+end
 
 function [T, lossP] = true_table(data_dir, ax, loss_ratio, floor_k)
 % 빔 스캔에서 LogRatio δ -> 실제 위치 환산표 (추적 구간만)
@@ -393,4 +387,28 @@ if strcmp(ax, 'X'), d = a*d1x + (1-a)*d2x; else, d = a*d1y + (1-a)*d2y; end
 m = abs(P) <= fit_half;
 p = polyfit(P(m), d(m), 1);
 sc = [p(1) p(2)];
+end
+
+function kpa = kpa_open(kin, poll_ms)   % [수정] KPA101 연결 + Monitor 모드
+NET.addAssembly(fullfile(kin, 'Thorlabs.MotionControl.DeviceManagerCLI.dll'));
+asm = NET.addAssembly(fullfile(kin, 'Thorlabs.MotionControl.KCube.PositionAlignerCLI.dll'));
+Thorlabs.MotionControl.DeviceManagerCLI.DeviceManagerCLI.BuildDeviceList();
+lst = Thorlabs.MotionControl.DeviceManagerCLI.DeviceManagerCLI.GetDeviceList( ...
+    Thorlabs.MotionControl.KCube.PositionAlignerCLI.KCubePositionAligner.DevicePrefix);
+sn  = char(lst.Item(0));
+kpa = Thorlabs.MotionControl.KCube.PositionAlignerCLI.KCubePositionAligner.CreateKCubePositionAligner(sn);
+kpa.Connect(sn);
+kpa.WaitForSettingsInitialized(10000);
+kpa.StartPolling(poll_ms); pause(0.5);
+kpa.EnableDevice(); pause(0.5);
+mt = asm.AssemblyHandle.GetType( ...
+    'Thorlabs.MotionControl.KCube.PositionAlignerCLI.PositionAlignerStatus+OperatingModes');
+kpa.SetOperatingMode(System.Enum.Parse(mt, 'Monitor'), false); pause(0.5);
+end
+
+function kpa_close(kpa)   % [수정] 폴링 스레드가 멈춘 뒤에 끊기
+try kpa.StopPolling(); catch, end
+pause(0.5);                                   % [수정]
+try kpa.Disconnect(true); catch, end
+pause(0.5);                                   % [수정]
 end

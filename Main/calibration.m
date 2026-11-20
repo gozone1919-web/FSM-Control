@@ -23,7 +23,7 @@ cfg.poll_ms   = 50;                          % [ms] KPA polling
 cfg.N_read    = 20;                          % 점당 읽기 횟수
 cfg.N_dark    = 40;
 
-cfg.u_list    = -0.006:0.001:0.006;          % [u] 13점, QPD에서 약 ±0.25 mm
+cfg.u_list    = -0.0025:0.0005:0.0025;       % [u] 11점, QPD에서 약 ±0.1 mm   % [수정] 작은 빔: 직선 구간만
 cfg.u_safe    = 0.01;
 cfg.t_settle  = 0.2;                         % [s]
 cfg.t_step_ms = 20;                          % [ms]

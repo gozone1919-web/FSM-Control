@@ -1,6 +1,6 @@
 function e5_rms_plot(RES, est_names, ev_t, ev_d, ttl)
 % 전체 RMS와 이벤트별 구간 RMS (외란 순간 ~ 다음 외란 전, 실제 위치, 탐색 구간 NaN 제외)
-mk = {'o', 's', '^', 'd'};  C = lines(4);          % est_id별 색·모양 (e5_plot과 같음)
+mk = {'o', 's', '^', 'd', 'v', '>', 'p'};  C = lines(7);          % [수정] est_id별 색·모양 (e5_plot과 같음)
 ne = numel(RES);  names = strings(ne, 1);  V = zeros(ne, 2);
 for i = 1:ne
     names(i) = est_names{RES(i).est_id};

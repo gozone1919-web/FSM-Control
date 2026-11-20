@@ -9,8 +9,8 @@ function e5_plot(RES, est_names, track_mm, loss_mm, ttl)
 %   RES는 est_id, EV 필드를 가진 구조체 배열 (같은 est_id 여러 개면 합침)
 %   TEST_closed_loop, E5_summary 공용
 
-cols  = lines(4);
-mk    = {'o', 's', '^', 'd'};
+cols  = lines(7);                                   % [수정] 추정기 7개
+mk    = {'o', 's', '^', 'd', 'v', '>', 'p'};       % [수정]
 edges = 0:0.5:4;  ctr = edges(1:end-1) + 0.25;
 ids   = unique([RES.est_id], 'stable');
 EVs   = cell(1, numel(ids));
