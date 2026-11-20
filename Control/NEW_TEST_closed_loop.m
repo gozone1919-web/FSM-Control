@@ -11,9 +11,13 @@
 % 전제: Kinesis 앱 꺼짐, laser_on으로 mMTIDevice 연결된 상태 (없으면 직접 연결)
 
 %% 0. 설정
-cfg.version  = 5;              % 4 = 작은 빔(렌즈 없음), 11/20 J
-cfg.est_list = [1 2 5 6 7];
-cfg.seed     = 6;              % 외란 순서 seed
+cfg.version  = 6;              % 6 = 큰 빔 재측정 (11/20 렌즈 재삽입, 3.1 mm)   % [수정]
+cfg.est_list = [1 2 5 6 7];    % [수정] seed 1
+cfg.seed     = 1;              % 외란 순서 seed   % [수정]
+
+cfg.fit_half = 0.3;            % [mm] 정규화 피팅 범위 (큰 빔)   % [수정]
+cfg.J        = [40.900 -0.254; 0.416 37.800];   % [mm/u] 11/20 18:24 E3 (간섭 -0.62 %, +1.10 %)   % [수정]
+
 cfg.T_total  = 80.0;           % [s] 추정기당 시간
 cfg.t_first  = 4.0;            % [s] 첫 외란 시각 (앞 2 s 정착, 뒤 2 s 정상 상태 흔들림)
 cfg.pre_win  = 2.0;            % [s] 정상 상태 흔들림 구간: 첫 외란 전 이만큼
@@ -30,8 +34,7 @@ cfg.loss_hold  = 0.2;          % [s] 광량 손실이 이만큼 이어지면 coa
 cfg.nan_hold   = 0.5;          % [s] 추정값 NaN이 이만큼 이어지면 coarse
 cfg.sat_delta  = 0.95;         % 추정 포화 기준 |δ_DoS|
 cfg.SUM_min  = 0.02;           % [V] 이 아래면 그 추정기 중단
-cfg.fit_half = 0.1;            % [mm] 정규화 피팅 범위 (작은 빔: 직선 구간만)
-cfg.J        = [40.900 -4.130; -1.680 37.800];   % [mm/u] 11/20 미러 재정렬 후 E3
+
 cfg.poll_ms  = 1;              % KPA 폴링 [ms]
 cfg.band_rel = 0.02;           % 정착 밴드: 외란 대비
 cfg.band_sig = 3;              % 정착 밴드: 정상 상태 흔들림 rms 배수 (둘 중 큰 값)
