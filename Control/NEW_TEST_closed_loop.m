@@ -1,8 +1,10 @@
 %% NEW_TEST_closed_loop.m
 % 실제 빔 폐루프 시험: 랜덤 숨은 스텝 외란 + SILEX 진동, 추정기 여러 개 연속 비교
-%   제어: 각 추정기의 X̂ / 평가: 실제 위치(LogRatio δ -> 빔 스캔 표 역변환)와 정규화 X̂ 두 기준
-%   추적 구간: 반대쪽 반 신호가 바닥값의 2배 이상인 범위 (실제 위치 측정 가능)
-%   탐색 구간: 그 밖 (방향만 앎, 실제 위치 NaN)
+%   제어: 각 추정기의 X̂ / 평가: 보정된 빔 위치(LogRatio δ -> 빔 스캔 표 역변환)와 정규화 X̂ 두 기준   % [수정 11/27]
+%   정상 상태 지표(정착 시점 ~ 다음 외란 전): 반경 RMSE, 편향(평균 위치 크기), 흔들림(평균 뺀 반경 σ), 축별 RMSE   % [수정 11/27]
+%     RMSE² = 편향² + 흔들림². µrad 환산은 미러-QPD 202.5 mm 기준   % [수정 11/27]
+%   추적 구간: 반대쪽 반 신호가 바닥값의 2배 이상인 범위 (보정된 빔 위치 측정 가능)   % [수정 11/27]
+%   탐색 구간: 그 밖 (방향만 앎, 보정된 빔 위치 NaN)   % [수정 11/27]
 %   추정값 NaN: PID는 직전 유효값으로 계속 계산, NaN 샘플·상황은 따로 기록
 %   coarse(재포착): 광량 손실(SUM < 93%) 0.2 s 이상, 또는 추정값 NaN 0.5 s 이상
 %     원인: 전환 순간 SUM < 93%면 광량 손실, 아니면 NaN. coarse 이벤트는 평균에서 제외
@@ -11,7 +13,7 @@
 % 전제: Kinesis 앱 꺼짐, laser_on으로 mMTIDevice 연결된 상태 (없으면 직접 연결)
 
 %% 0. 설정
-cfg.version  = 6;              % 6 = 큰 빔 재측정 (11/20 렌즈 재삽입, 3.1 mm)   % [수정]
+cfg.version  = 7;              % 6 = 큰 빔 재측정 (11/20 렌즈 재삽입, 3.1 mm)   % [수정]
 cfg.est_list = [1 2 5 6 7];    % [수정] seed 1
 cfg.seed     = 1;              % 외란 순서 seed   % [수정]
 
@@ -35,7 +37,7 @@ cfg.nan_hold   = 0.5;          % [s] 추정값 NaN이 이만큼 이어지면 coa
 cfg.sat_delta  = 0.95;         % 추정 포화 기준 |δ_DoS|
 cfg.SUM_min  = 0.02;           % [V] 이 아래면 그 추정기 중단
 
-cfg.poll_ms  = 1;              % KPA 폴링 [ms]
+cfg.poll_ms  = 5;              % KPA 폴링 [ms]. 1~5 ms 모두 새 값은 16 ms마다 (11/27 진단), 5 ms로 Kinesis 스레드 부담 감소   % [수정 11/27]
 cfg.band_rel = 0.02;           % 정착 밴드: 외란 대비
 cfg.band_sig = 3;              % 정착 밴드: 정상 상태 흔들림 rms 배수 (둘 중 큰 값)
 cfg.n_out    = 3;              % 연속 몇 샘플 밖이면 '안 정착'으로 볼지 (튐 무시)
@@ -59,10 +61,10 @@ end
 addpath(genpath(root));
 save_dir = fullfile(root, 'Main', 'DATA');
 
-%% 2. 실제 위치 환산표(추적 구간), 광량 손실 위치 (최신 빔 스캔)
+%% 2. 보정된 빔 위치 환산표(추적 구간), 광량 손실 위치 (최신 빔 스캔)   % [수정 11/27]
 [TX, lossX] = true_table(save_dir, 'X', cfg.loss_ratio, cfg.floor_k);
 [TY, lossY] = true_table(save_dir, 'Y', cfg.loss_ratio, cfg.floor_k);
-fprintf('추적 구간(실제 위치 측정 가능): X %.2f ~ %+.2f mm, Y %.2f ~ %+.2f mm\n', ...
+fprintf('추적 구간(보정된 빔 위치 측정 가능): X %.2f ~ %+.2f mm, Y %.2f ~ %+.2f mm\n', ...   % [수정 11/27]
     TX.P(1), TX.P(end), TY.P(1), TY.P(end));
 fprintf('바닥값(반대쪽 반 신호): X %.4f / %.4f V, Y %.4f / %.4f V\n', TX.floor, TY.floor);
 track_mm = min(abs([TX.P(1) TX.P(end) TY.P(1) TY.P(end)]));
@@ -136,7 +138,7 @@ try
             status, 1e3*median(diff(L.t)), 1e3*median(diff(L.t(L.new))), ...
             sum(L.coarse > 0), sum(L.coarse == 1), sum(L.coarse == 2), sum(L.nan & L.new));
         tot = total_metric(L, ev_t);
-        fprintf('    전체 오차: RMS %.1f µm (%.0f µrad), 탐색 구간 %.1f %% 시간, 최대 %.2f mm\n', ...
+        fprintf('    전체 RMS (참고, 계단 복귀 포함): %.1f µm (%.0f µrad), 탐색 구간 %.1f %% 시간, 최대 %.2f mm\n', ...   % [수정 11/27]
             tot.rms_um, tot.rms_um/L_mm*1e3, tot.search_pct, tot.max_mm);
         [EV,  nr, NV] = event_metrics(L, ev_t, ev_d, cfg, 'true');
         [EVe, ~,  ~ ] = event_metrics(L, ev_t, ev_d, cfg, 'est');
@@ -165,27 +167,27 @@ if ~isempty(RES)
     for ie = 1:numel(RES), RES(ie).NV.seed = repmat(cfg.seed, height(RES(ie).NV), 1); end
     S  = e5_table(RES, 'EV',  est_names);
     Se = e5_table(RES, 'EVe', est_names);
-    fprintf('\n그룹: NaN없음 / NaN있음 / 전체. 평균·중앙값은 coarse 이벤트를 뺀 값, 횟수 열은 전체\n');
-    fprintf('coarse_loss: 광량 손실로 coarse, coarse_nan: NaN으로 coarse, loss: 광량 손실 발생(회복 포함)\n');
-    fprintf('search: 탐색 구간 진입, ret_med_ms: 추적 구간 복귀 시간, nan_n: NaN 샘플 수 합\n');
-    fprintf('peak_ratio: 탐색 구간에 안 들어간 이벤트만 (들어가면 최대 오차 측정 불가)\n');
-    fprintf('rmse: 정착 후 다음 외란까지 (진동 포함)\n');
-    fprintf('\n=== [실제 위치 기준] seed %d, Kp %.2f, Ki %.0f, 진동 %.0f µm ===\n', cfg.seed, cfg.Kp, cfg.Ki, cfg.vib_um);
+    % 지표 설명 출력 삭제   % [수정 11/27]
+    fprintf('\n=== [보정된 빔 위치 기준] seed %d, Kp %.2f, Ki %.0f, 진동 %.0f µm ===\n', cfg.seed, cfg.Kp, cfg.Ki, cfg.vib_um);   % [수정 11/27]
     disp(S)
-    fprintf('\n=== [정규화 X̂ 기준] seed %d, Kp %.2f, Ki %.0f, 진동 %.0f µm ===\n', cfg.seed, cfg.Kp, cfg.Ki, cfg.vib_um);
-    disp(Se)
+    % 정규화 X̂ 기준 표는 계산·저장만, 출력 삭제   % [수정 11/27]
     NVall = table();
     for ie = 1:numel(RES)
         if height(RES(ie).NV) == 0, continue; end
         T = RES(ie).NV;  T.estimator = repmat(string(est_names{RES(ie).est_id}), height(T), 1);
         NVall = [NVall; movevars(T, 'estimator', 'Before', 1)];                                     %#ok<AGROW>
     end
-    fprintf('\n=== NaN 상황 (NaN이 난 이벤트마다 한 줄) ===\n');
-    if height(NVall) > 0, disp(NVall), else, disp('NaN 없음'); end
-    for ie = 1:numel(RES)
-        fprintf('%-14s 상태: %s, 정상 상태 흔들림(진동 포함) %.2f um, 전체 RMS %.1f um, 탐색 구간 %.1f %%\n', ...
-            est_names{RES(ie).est_id}, RES(ie).status, RES(ie).noise_um, RES(ie).tot.rms_um, RES(ie).tot.search_pct);
-    end
+    % NaN 상황표는 저장만, 출력 삭제   % [수정 11/27]
+    % 추정기별 상태 재출력 삭제 (루프 중 출력과 중복)   % [수정 11/27]
+    fprintf('\n=== 정상 상태 (정착 후, 보정된 빔 위치, coarse 제외, 이벤트 제곱평균의 제곱근) ===\n');   % [수정 11/27]
+    fprintf('RMSE² = 편향² + 흔들림² = RMSE_x² + RMSE_y² (이 표에서 성립)\n');   % [수정 11/27]
+    fprintf('%-14s %9s %9s %9s %9s %9s %6s\n', '', 'RMSE', '편향', '흔들림', 'RMSE_x', 'RMSE_y', 'n');   % [수정 11/27]
+    for ie = 1:numel(RES)   % [수정 11/27]
+        E = RES(ie).EV;  ok = E.coarse == 0 & isfinite(E.rmse_um);   % [수정 11/27]
+        v = sqrt(mean([E.rmse_um(ok), E.bias_um(ok), E.jit_um(ok), E.rmse_x_um(ok), E.rmse_y_um(ok)].^2, 1));   % 이벤트 제곱평균의 제곱근   % [수정 11/27]
+        fprintf('%-14s %6.2f um %6.2f um %6.2f um %6.2f um %6.2f um %6d\n', est_names{RES(ie).est_id}, v, sum(ok));   % [수정 11/27]
+        fprintf('%-14s %5.1f µrad %5.1f µrad %5.1f µrad %5.1f µrad %5.1f µrad\n', '', v/L_mm*1e3);   % [수정 11/27]
+    end   % [수정 11/27]
 
     out = fullfile(save_dir, sprintf('E5_CMP_seed%d_%s.mat', cfg.seed, datestr(now, 'yyyymmdd_HHMMSS')));
     save(out, 'RES', 'S', 'Se', 'NVall', 'cfg', 'off', 'ev_t', 'ev_d', 'est_names', ...
@@ -203,7 +205,7 @@ function [L, status] = run_loop(dev, kpa, cfg, a, nrm, off, SUM0, ev_t, ev_cum_u
     L.t = NaN(N,1); L.raw = NaN(N,3); L.est = NaN(N,2); L.estc = NaN(N,2); L.true = NaN(N,2);
     L.u = NaN(N,2); L.dDoS = NaN(N,2); L.new = false(N,1); L.nan = false(N,1);
     L.loss = false(N,1); L.coarse = zeros(N,1); L.reacq = false(N,1);
-    integ = [0; 0];  u_pid = [0; 0];  u_cmd = [0; 0];
+    integ = [0; 0];  u_pid = [0; 0];   % [수정 11/27] u_cmd 초기화 삭제 (매 루프 먼저 계산됨)
     u_sent = [NaN; NaN];
     r_prev = [NaN NaN NaN];  t_upd = NaN;  est = [0; 0];  est_c = [0; 0];  tru = [0; 0];  dDoS = [0; 0];
     isn = false;  lossS = false;  t_loss0 = NaN;  t_nan0 = NaN;  reacq = false;
@@ -269,7 +271,7 @@ end
 end
 
 function [EV, nr, NV] = event_metrics(L, ev_t, ev_d, cfg, which)
-% which: 'true' = 실제 위치 기준, 'est' = 정규화 X̂ 기준
+% which: 'true' = 보정된 빔 위치 기준, 'est' = 정규화 X̂ 기준   % [수정 11/27]
 % EV: 이벤트별 지표, NV: NaN이 난 이벤트의 상황
     tn = L.t(L.new);  rw = L.raw(L.new,:);  sn = rw(:,3);
     if strcmp(which, 'true'), Pt = L.true(L.new,:); else, Pt = L.est(L.new,:); end
@@ -281,9 +283,10 @@ function [EV, nr, NV] = event_metrics(L, ev_t, ev_d, cfg, which)
     if isempty(tn), return; end
     nev = find(ev_t < tn(end), 1, 'last');  if isempty(nev), return; end
     vn = {'event','dist_mm','ang_deg','peak_mm','peak_est_mm','settle_ms','ret_ms','os_pct', ...
-          'rmse_um','min_SUM','nan_n','nan_ms','coarse','loss','sat','search'};
+          'rmse_um','bias_um','jit_um','rmse_x_um','rmse_y_um', ...   % [수정 11/27]
+          'min_SUM','nan_n','nan_ms','coarse','loss','sat','search'};
     EV = table('Size', [nev numel(vn)], 'VariableTypes', ...
-        [repmat({'double'}, 1, 13), repmat({'logical'}, 1, 3)], 'VariableNames', vn);
+        [repmat({'double'}, 1, 17), repmat({'logical'}, 1, 3)], 'VariableNames', vn);   % [수정 11/27]
     nvn = {'event','dist_mm','ang_deg','t_nan_ms','nan_n','nan_ms','x_before_mm','y_before_mm', ...
            'SUM_before','half_zero','coarse_nan'};
     NV = table('Size', [0 numel(nvn)], 'VariableTypes', ...
@@ -315,8 +318,18 @@ function [EV, nr, NV] = event_metrics(L, ev_t, ev_d, cfg, which)
         proj = P * dh;  [pk, ipk] = max(proj);
         if isnan(pk) || c > 0, os = NaN; else, os = max(0, -min(proj(ipk:end))) / d * 100; end
         if isempty(ist), rm = NaN; else, rm = 1e3*sqrt(mean(err(ist:end).^2, 'omitnan')); end
+        bi = NaN; ji = NaN; rx = NaN; ry = NaN;   % [수정 11/27]
+        if ~isempty(ist)   % [수정 11/27]
+            Ps = P(ist:end,:);  Ps = Ps(all(isfinite(Ps), 2), :);   % 정착 후, 측정 가능한 샘플만   % [수정 11/27]
+            if ~isempty(Ps)   % [수정 11/27]
+                mu = mean(Ps, 1);  sg = std(Ps, 1, 1);           % 평균(편향), 표준편차(N 기준)   % [수정 11/27]
+                bi = 1e3*norm(mu);  ji = 1e3*norm(sg);   % [수정 11/27]
+                rx = 1e3*sqrt(mean(Ps(:,1).^2));  ry = 1e3*sqrt(mean(Ps(:,2).^2));   % [수정 11/27]
+            end   % [수정 11/27]
+        end   % [수정 11/27]
         nm = nn(m);  nan_n = sum(nm);
         EV(jj,:) = {jj, d, ang, max(err, [], 'includenan'), max(sqrt(sum(Pe(m,:).^2, 2))), 1e3*st, ret, os, rm, ...
+                    bi, ji, rx, ry, ...   % [수정 11/27]
                     min(sn(m))/sum0, nan_n, 1e3*dts*nan_n, c, any(ln(m)), ...
                     any(any(abs(dn(m,:)) >= cfg.sat_delta)), srch};
         if nan_n > 0
@@ -335,7 +348,7 @@ function [EV, nr, NV] = event_metrics(L, ev_t, ev_d, cfg, which)
 end
 
 function tot = total_metric(L, ev_t)
-% 첫 외란부터 끝까지 전체 오차 (실제 위치). 탐색 구간(NaN)은 RMS에서 빼고 시간 비율로 기록
+% 첫 외란부터 끝까지 전체 오차 (보정된 빔 위치, 참고용: 계단 복귀 포함).   % [수정 11/27] % 탐색 구간(NaN)은 RMS에서 빼고 시간 비율로 기록
     w = L.new & L.t >= ev_t(1);
     e = sqrt(sum(L.true(w,:).^2, 2));
     tot.rms_um     = 1e3*sqrt(mean(e.^2, 'omitnan'));
@@ -344,7 +357,7 @@ function tot = total_metric(L, ev_t)
 end
 
 function [T, lossP] = true_table(data_dir, ax, loss_ratio, floor_k)
-% 빔 스캔에서 LogRatio δ -> 실제 위치 환산표 (추적 구간만)
+% 빔 스캔에서 LogRatio δ -> 보정된 빔 위치 환산표 (추적 구간만)   % [수정 11/27]
 f = dir(fullfile(data_dir, sprintf('BEAM_SCAN_%s_*.mat', ax)));
 if isempty(f), error('빔 스캔 파일 없음 (%s축)', ax); end
 [~, i] = max([f.datenum]);
