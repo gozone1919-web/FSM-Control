@@ -13,9 +13,11 @@
 % 전제: Kinesis 앱 꺼짐, laser_on으로 mMTIDevice 연결된 상태 (없으면 직접 연결)
 
 %% 0. 설정
-cfg.version  = 7;              % 7 = 11/27 렌즈 위치 재조정, r0 1.65 mm, 빔 스캔·E3 재측정   % [수정 11/27]
-cfg.est_list = [5 4 3 2 1];    % [수정 11/27] seed 1 (DoS, LogRatio, Hybrid 0.9/0.8/0.5)
-cfg.seed     = 2;              % 외란 순서 seed   % [수정]
+cfg.version  = 8;              % 8 = 논문 원식 스케일 (DoS·Hybrid r0, LogRatio k), PI 0.4/20 고정, 중심 정규화 없음   % [수정 11/27]
+cfg.seed     = 1;              % 외란 순서 seed (배치 실행 시 ovr_seed로 덮어씀)   % [수정 11/27]
+cfg.est_list = [1 2 3 4];      % [수정 11/27] DoS, LogRatio, Hybrid 0.9/0.8 (Hybrid 0.5는 시뮬레이션에서 진동 → 제외)
+cfg.r0_mm    = 1.65;           % [mm] 논문 원식 DoS·Hybrid 스케일 = 빔 반지름 (11/27 빔 스캔)   % [수정 11/27]
+cfg.k_lr     = 0.6;            % [mm] 논문 원식 LogRatio 스케일 k (11/27 시뮬레이션, 추적 시간 최소)   % [수정 11/27]
 
 cfg.fit_half = 0.3;            % [mm] 정규화 피팅 범위 (큰 빔)   % [수정]
 cfg.J        = [40.900 -0.371; 0.230 37.800];   % [mm/u] 11/27 14:55 E3 (간섭 -0.91 %, +0.61 %)   % [수정 11/27]
@@ -52,6 +54,7 @@ clear RES
 
 if exist('ovr_seed', 'var'), cfg.seed = ovr_seed; end        % [수정 11/27] 배치 실행용: 바깥에서 seed 지정
 if exist('ovr_est', 'var'),  cfg.est_list = ovr_est; end     % [수정 11/27] 배치 실행용: 바깥에서 추정기 지정
+
 
 %% 1. 경로
 here = fileparts(mfilename('fullpath'));  if isempty(here), here = pwd; end
@@ -133,6 +136,11 @@ try
         a  = alpha_list(id);
         nX = est_norm(save_dir, 'X', a, cfg.fit_half);
         nY = est_norm(save_dir, 'Y', a, cfg.fit_half);
+        if cfg.version >= 8   % [수정 11/27] 중심 정규화 대신 논문 원식 스케일 (영점 보정은 유지)
+            s = cfg.r0_mm;  if a == 0, s = cfg.k_lr; end
+            nX(1) = sign(nX(1))/s;  nY(1) = sign(nY(1))/s;   % est = (δ - 영점)/nrm(1) = s·(δ - 영점), 부호 유지
+        end
+
         mMTIDevice.SetDeviceParam(MTIParam.OutputOffsets, 0, 0);  pause(1);
         D0 = read_n(kpa, 20, 5) - off;  SUM0 = mean(D0(:,3));
         fprintf('\n[%d/%d] %s 시작 (시작 SUM %.3f V)\n', ie, numel(cfg.est_list), est_names{id}, SUM0);
@@ -149,7 +157,8 @@ try
                          'noise_um', 1e3*nr, 'EV', EV, 'EVe', EVe, 'NV', NV, 'tot', tot);
         R = RES(ie);   % [수정] 추정기 하나 끝날 때마다 바로 저장 (꺼져도 끝난 것은 남음)
                 if strcmp(status, '정상 종료'), tag = 'PART'; else, tag = 'FAIL'; end   % [수정 11/27] 중단된 실행은 FAIL로 저장 (배치 성공 판정용)
-        part = fullfile(save_dir, sprintf('E5_%s_seed%d_est%d_%s.mat', tag, cfg.seed, id, stamp));   % [수정 11/27]
+                pre = 'E5';  if cfg.version >= 8, pre = 'E5v8'; end   % [수정 11/27] v7 파일과 이름 구분 (배치 판정용)
+        part = fullfile(save_dir, sprintf('%s_%s_seed%d_est%d_%s.mat', pre, tag, cfg.seed, id, stamp));   % [수정 11/27]
         save(part, 'R', 'cfg', 'alpha_list', 'off', 'ev_t', 'ev_d', 'est_names', ...   % [수정]
             'TX', 'TY', 'lossX', 'lossY', 'track_mm', 'vib_mm');   % [수정]
         fprintf('    임시 저장: %s\n', part);   % [수정]

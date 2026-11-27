@@ -6,8 +6,8 @@ root  = 'C:\Users\Geochang\OneDrive\Documents\MATLAB\FSM Control';
 data  = fullfile(root, 'Main', 'DATA');
 day   = '20261127';                                   % 날짜가 바뀌면 수정
 exe   = fullfile(matlabroot, 'bin', 'matlab.exe');
-seeds = 2:7;  ests = 1:5;
-has = @(s, e) ~isempty(dir(fullfile(data, sprintf('E5_PART_seed%d_est%d_%s_*.mat', s, e, day))));
+seeds = 1:7;  ests = 1:4;                             % [수정 11/27] v8: seed 1~7, 추정기 4개
+has = @(s, e) ~isempty(dir(fullfile(data, sprintf('E5v8_PART_seed%d_est%d_%s_*.mat', s, e, day))));   % [수정 11/27]
 
 for pass = 1:3
     for s = seeds
