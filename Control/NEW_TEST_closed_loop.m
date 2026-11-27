@@ -50,6 +50,9 @@ alpha_list = [1 0 0.9 0.8 0.5 0.3 0.1];                                         
 kin = 'C:\Program Files\Thorlabs\Kinesis';
 clear RES
 
+if exist('ovr_seed', 'var'), cfg.seed = ovr_seed; end        % [수정 11/27] 배치 실행용: 바깥에서 seed 지정
+if exist('ovr_est', 'var'),  cfg.est_list = ovr_est; end     % [수정 11/27] 배치 실행용: 바깥에서 추정기 지정
+
 %% 1. 경로
 here = fileparts(mfilename('fullpath'));  if isempty(here), here = pwd; end
 root = here;
@@ -145,7 +148,8 @@ try
         RES(ie) = struct('est_id', id, 'L', L, 'status', status, 'SUM0', SUM0, ...
                          'noise_um', 1e3*nr, 'EV', EV, 'EVe', EVe, 'NV', NV, 'tot', tot);
         R = RES(ie);   % [수정] 추정기 하나 끝날 때마다 바로 저장 (꺼져도 끝난 것은 남음)
-        part = fullfile(save_dir, sprintf('E5_PART_seed%d_est%d_%s.mat', cfg.seed, id, stamp));   % [수정]
+                if strcmp(status, '정상 종료'), tag = 'PART'; else, tag = 'FAIL'; end   % [수정 11/27] 중단된 실행은 FAIL로 저장 (배치 성공 판정용)
+        part = fullfile(save_dir, sprintf('E5_%s_seed%d_est%d_%s.mat', tag, cfg.seed, id, stamp));   % [수정 11/27]
         save(part, 'R', 'cfg', 'alpha_list', 'off', 'ev_t', 'ev_d', 'est_names', ...   % [수정]
             'TX', 'TY', 'lossX', 'lossY', 'track_mm', 'vib_mm');   % [수정]
         fprintf('    임시 저장: %s\n', part);   % [수정]
